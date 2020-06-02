@@ -1,4 +1,28 @@
-function ContextMenu( props, elements ){
+function Functions(){}
+
+Functions.prototype = (function(){
+  return {
+    findElement: function(rootEl, tagName){
+      var imageEl = rootEl.tagName.toLowerCase() === tagName ? rootEl : null;
+
+      imageEl = rootEl.querySelector(tagName);
+      if( imageEl ) return imageEl;
+
+      imageEl = rootEl.parentElement.querySelector(tagName);
+      if( imageEl ) return imageEl;
+
+      imageEl = rootEl.closest(tagName);
+      if( imageEl ) return imageEl;
+
+      return null;
+    }
+  }
+})();
+
+
+function CustomContextMenu( props, elements ){
+  var self = this;
+
   var instance = null;
   var config = {
     root: document.body,
@@ -8,6 +32,7 @@ function ContextMenu( props, elements ){
   var events = {
     binds: [],
     handler: null,
+    current: null,
   }
   
   var open = false;
@@ -21,38 +46,48 @@ function ContextMenu( props, elements ){
     }
   }
     
-  this.getInstance = function(){ return instance; }
-  this.setInstance = function(a){ instance = a; }
-  this.clearInstance = function(a){ instance = null; }
+  self.getInstance = function(){ return instance; }
+  self.setInstance = function(i){ instance = i; }
+  self.clearInstance = function(i){ instance = null; }
   
-  this.getConfig = function(k){ return config[k]; }
-  this.setConfig = function(k,v){ config[k] = v; }
+  self.getConfig = function(k){ return config[k]; }
+  self.setConfig = function(k,v){ config[k] = v; }
   
-  this.debug = function(m){ config.debug && console.log(m); }
-  this.getDebug = function(){ return config.debug; }
-  this.setDebug = function(f){ config.debug = !!f; }
+  self.debug = function(s){ config.debug && console.log(s); }
+  self.getDebug = function(){ return config.debug; }
+  self.setDebug = function(f){ config.debug = !!f; }
   
-  this.isOpen = function(){ return open; }
-  this.setOpen = function(){ open = true; }
-  this.setClose = function(){ open = false; }
+  self.isOpen = function(){ return open; }
+  self.setOpen = function(){ open = true; }
+  self.setClose = function(){ open = false; }
   
-  this.getBinds = function(){ return events.binds||[]; }
-  this.setBinds = function(a){ events.binds = a; }
-  this.clearBinds = function(){ events.binds = []; }
+  self.getBinds = function(){ return events.binds||[]; }
+  self.setBinds = function(e){ events.binds = e; }
+  self.clearBinds = function(){ events.binds = []; }
   
-  this.getHandler = function(){ return events.handler; }
-  this.setHandler = function(e){ events.handler = e; }
-  this.clearHandler = function(){ events.handler = null; }
+  self.getHandler = function(){ return events.handler; }
+  self.setHandler = function(e){ events.handler = e; }
+  self.clearHandler = function(){ events.handler = null; }
+
+  self.setCurrentEvent = function(e){ events.current = e; }
+  self.getCurrentEvent = function(){ return events.current; }
   
-  this.getProps = function(){ return props; }
+  self.getProps = function(){ return props; }
+  self.setProps = function(p){ props = p; }
+
+  Object.keys(Functions.prototype).forEach(function(proto){
+    if( typeof(self[proto]) === 'undefined' ){
+      self[proto] = Functions.prototype[proto]
+    }
+  });
   
-  props && this.init( props );
+  props && self.init( props );
 }
 
-ContextMenu.prototype = (function(){
+CustomContextMenu.prototype = (function(){
   function _init( self, props ){
-    self.props = props;
-    
+    self.setProps( props );
+
     _loadStyle();
     
     _bindEvent( self );
@@ -62,7 +97,7 @@ ContextMenu.prototype = (function(){
     _remove( self );
     
     var props = self.getProps();
-    var instance = __createElement( props );
+    var instance = __createElement( self, props );
     
     self.setInstance( instance );
   }
@@ -110,7 +145,7 @@ ContextMenu.prototype = (function(){
       '}',
       '.custom-context-menu table { width: 100%; border: none; border-collapse: collapse; border-spacing: 0; }',
       '.custom-context-menu table tbody { background-color: #ffffff; }',
-      '.custom-context-menu table tr {	height: 2.5em; }',
+      '.custom-context-menu table tr {	height: 2em; }',
       '.custom-context-menu table tr:hover { background-color: #e9e9e9; }',
       '.custom-context-menu table th,',
       '.custom-context-menu table td { padding: 0.2em 0.5em; }',
@@ -191,10 +226,10 @@ ContextMenu.prototype = (function(){
   }
   
   // Private Methods
-  function __createElement( props ){
+  function __createElement( self, props ){
     if( props instanceof Array ){
       return props.map(function(_props){
-        return __createElement( _props );
+        return __createElement( self, _props );
       });
     } else if( props instanceof Object ) {
       var element = document.createElement( props.type );
@@ -225,12 +260,12 @@ ContextMenu.prototype = (function(){
             break;
           case 'onClick': // value: Function
             if( value instanceof Function ){
-              element.addEventListener('click', value, false);
+              element.addEventListener('click', function(event){ value( event, self ); }, false);
             }
             break;
           case 'children': // value: Object, Array
             [].concat( value ).map(function( childrenProps ){
-              return __createElement( childrenProps );
+              return __createElement( self, childrenProps );
             }).forEach(function( children ){
               if( children ){
                 // Object or Array
@@ -253,24 +288,28 @@ ContextMenu.prototype = (function(){
   
   // Private Methods
   function __handleContextMenu( self ){
-    
     function eventHandler(event){
       event.preventDefault();
-      
-      var root = self.getConfig('root');
-      
+
+      self.setCurrentEvent(event);
       
       if( !self.isOpen() ){
+        var root = self.getConfig('root');
         
-        _attach( self );
-            
-        function closeContextMenu(event){
-          console.log( 'click' );
-          _remove( self );
-          
-          root.removeEventListener('click', closeContextMenu, false);
+        function closeContextMenu(_event){
+          var target = _event.target;
+
+          var instance = self.getInstance();
+          var closest = target.closest('#'+instance.id);
+
+          if( !closest ){
+            _remove( self );
+            root.removeEventListener('click', closeContextMenu, false);
+          }
         }
         root.addEventListener('click', closeContextMenu, false);
+
+        _attach( self );
       }
       
       _move( self, event.pageX, event.pageY );
@@ -300,29 +339,62 @@ ContextMenu.prototype = (function(){
 
 
 
-
-
-var contextMenu = new ContextMenu({
+var ctxMenu = new CustomContextMenu({
   type: 'div',
   id: 'custom-context-menu',
   className: 'custom-context-menu',
-  children: {
-    type: 'table',
-    id: 'ctx-menu-table',
-    className: 'ctx-menu-table',
-    border: 1,
-    children: {
-      type: 'tbody',
-      children: [
-        { 
-          type: 'tr',
-          children: [
-            { type: 'th', label: 'text' }
-          ]
-        }
-      ]
+  children: [
+    {
+      type: 'table',
+      id: 'ctx-menu-table',
+      className: 'ctx-menu-table',
+      border: 1,
+      children: {
+        type: 'tbody',
+        children: [
+          { 
+            type: 'tr',
+            children: [
+              { type: 'th', label: '' },
+              { 
+                type: 'td',
+                label: 'getImage',
+                onClick: function( event, root ){
+                  event.preventDefault();
+
+                  var rootEvent = root.getCurrentEvent();
+                  var imageEl = root.findElement( rootEvent.target, 'img');
+
+                  if( imageEl ){
+                    var viewer = document.getElementById('viewer');
+                    var clone = imageEl.cloneNode();
+                    clone.style.width = '100%';
+
+                    [].forEach.call(viewer.children, function(child){
+                      viewer.removeChild(child);
+                    });
+
+                    viewer.appendChild(clone);
+                  }
+                }
+              },
+            ]
+          }
+        ]
+      }
+    },
+    {
+      type: 'div',
+      id: 'viewer',
+      style: {
+        maxWidth: '300px',
+        maxHeight: '400px',
+        overflowY: 'scroll',
+      }
     }
-  }
+  ]
 }, document.body);
 
-//contextMenu.bindEvent( document.querySelector('#logo-default') )
+// ctxMenu.bindEvent( document.body );
+// ctxMenu.bindEvent( document.querySelectorAll('a') );
+// ctxMenu.unbindEvent();
