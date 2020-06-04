@@ -1,4 +1,4 @@
-/* Polyfill */
+/* Polyfill: Element.closest */
 if (!Element.prototype.matches) {
   Element.prototype.matches = Element.prototype.msMatchesSelector || 
                               Element.prototype.webkitMatchesSelector;
@@ -14,6 +14,40 @@ if (!Element.prototype.closest) {
     } while (el !== null && el.nodeType === 1);
     return null;
   };
+}
+
+/* Polyfill: Object.assign */
+if (!Object.assign) {
+  Object.defineProperty(Object, 'assign', {
+    enumerable: false,
+    configurable: true,
+    writable: true,
+    value: function(target) {
+      'use strict';
+      if (target === undefined || target === null) {
+        throw new TypeError('Cannot convert first argument to object');
+      }
+
+      var to = Object(target);
+      for (var i = 1; i < arguments.length; i++) {
+        var nextSource = arguments[i];
+        if (nextSource === undefined || nextSource === null) {
+          continue;
+        }
+        nextSource = Object(nextSource);
+
+        var keysArray = Object.keys(Object(nextSource));
+        for (var nextIndex = 0, len = keysArray.length; nextIndex < len; nextIndex++) {
+          var nextKey = keysArray[nextIndex];
+          var desc = Object.getOwnPropertyDescriptor(nextSource, nextKey);
+          if (desc !== undefined && desc.enumerable) {
+            to[nextKey] = nextSource[nextKey];
+          }
+        }
+      }
+      return to;
+    }
+  });
 }
 
 
@@ -39,37 +73,41 @@ Functions.prototype = (function(){
 })();
 
 
-function CustomContextMenu( _config, elements ){
+function CustomContextMenu( _config ){
   var self = this;
 
   var instance = null;
-  var config = {
-    root: document.body,
-    debug: false,
-    point_gap: 0,
-  }
-  
   var datas ={}
+  var open = false;
+  var config = {
+    debug: false,
+    root: document.body,
+    target: [],
+    props: {},
+    point_gap: 0,
+    defaultClassName: 'custom-context-menu',
+  }
   
   var events = {
-    binds: [],
-    handler: null,
-    current: null,
+    contextMenu: {
+      type: null,
+      handler: null,
+      binds: [],
+    },
+    closeContext: {
+      type: null,
+      handler: null,
+      binds: [],
+    },
+    closeOtherContext: {
+      type: null,
+      handler: null,
+      binds: [],
+    }
   }
-  
-  var open = false;
-  var props = ( props||{} );
   
   if( _config ){
-  	config = Objects.assign({}, config, _config);
-  }
-  
-  if( elements ){
-    if( Array.isArray( elements ) ){
-      events.binds = elements;
-    } else {
-      events.binds.push( elements ); 
-    }
+    config = Object.assign({}, config, _config);
   }
     
   self.getInstance = function(){ return instance; }
@@ -79,7 +117,7 @@ function CustomContextMenu( _config, elements ){
   self.getConfig = function(k){ return config[k]; }
   self.setConfig = function(k,v){ config[k] = v; }
   
-  self.debug = function(s){ config.debug && console.log(s); }
+  self.debug = function(a, b){ config.debug && console.log( a, b ); } // [].map.call(arguments, function(m){ return m; })
   self.getDebug = function(){ return config.debug; }
   self.setDebug = function(f){ config.debug = !!f; }
   
@@ -87,25 +125,27 @@ function CustomContextMenu( _config, elements ){
   self.setOpen = function(){ open = true; }
   self.setClose = function(){ open = false; }
   
-  self.getBinds = function(){ return events.binds||[]; }
-  self.setBinds = function(e){ events.binds = e; }
-  self.clearBinds = function(){ events.binds = []; }
-  
-  self.getHandler = function(){ return events.handler; }
-  self.setHandler = function(e){ events.handler = e; }
-  self.clearHandler = function(){ events.handler = null; }
-
-  self.setCurrentEvent = function(e){ events.current = e; }
-  self.getCurrentEvent = function(){ return events.current; }
-  
-  self.getProps = function(){ return props; }
-  self.setProps = function(p){ props = p; }
+  self.getProps = function(){ return config.props; }
+  self.setProps = function(p){ config.props = p; }
   
   self.getDatas = function(){ return datas; }
   self.setDatas = function(d){ datas = d; }
   
   self.getData = function(k){ return datas[k]; }
   self.setData = function(k,v){ datas[k]=v; }
+  
+  self.setEvent = function(k,t,h,b){ events[k] = {type:t||null, handler:h||null, binds:b||[]} }
+  self.getEvent = function(k){ return events[k]; }
+  self.clearEvent = function(k){ events[k] = {type: null, handler: null, binds: []} }
+  
+  self.getEventBinds = function(k){ return events[k].binds||[]; }
+  self.setEventBinds = function(k,b){ events[k] ? events[k].binds = b : self.setEvent(k,null,null,b); }
+  self.clearEventBinds = function(k){ events[k].binds = []; }
+  self.addEventBind = function(k,b){ events[k].binds.push(b); }
+  
+  self.getEventHandler = function(k){ return events[k].handler; }
+  self.setEventHandler = function(k,t,h){ events[k].type = t; events[k].handler = h; }
+  self.clearEventHandler = function(k){ events[k].type = null; events[k].handler = null; }
 
   Object.keys(Functions.prototype).forEach(function(proto){
     if( typeof(self[proto]) === 'undefined' ){
@@ -113,66 +153,102 @@ function CustomContextMenu( _config, elements ){
     }
   });
   
-  props && self.init();
+  config.props && self.init();
 }
 
 CustomContextMenu.prototype = (function(){
   function _init( self ){
-    _bindEvent( self );
+    var target = self.getConfig('target');
+    
+    _initEvent( self );
+    _initBindEvent( self, target );
   }
   
   function _render( self ){
-    _remove( self );
-    
+    self.debug('_render');
+    var root = self.getConfig('root');
     var props = self.getProps();
-    var instance = __createElement( self, props );
+    var instance = self.getInstance();
+    var newInstance = _createElement( self, props );
     
-    self.setInstance( instance );
-  }
-  
-  function _unbindEvent( self ){
-    if( self.isOpen() ){
-      _remove(self);
+    newInstance.classList.add( self.getConfig('defaultClassName') );
+    
+    if( instance ){
+      self.debug('_reRender');
+      root.replaceChild( newInstance, instance );
+    } else {
+      self.debug('_initRender');
+      root.appendChild( newInstance );
     }
     
-    var handler = self.getHandler();
-    
-    self.getBinds().forEach(function( el ){
-      console.log( 'unbind', el );
-      el.removeEventListener('contextmenu', handler, false);
-    });
-    
-    self.clearBinds();
-    self.clearHandler();
+    self.setInstance( newInstance );
   }
   
-  function _bindEvent( self, elements ){
-    var binds = [].concat(elements||self.getBinds());
+  function _initEvent( self ){
+    self.debug('_initEvent');
+    var contextMenuHandler = __handleContextMenu( self );
+    var closeContextHandler = __handleCloseContextMenu(self);
+    var closeOtherContextHandler = __handleCloseOtherContextMenu(self);
+    
+    self.setEvent('contextMenu', 'contextmenu', contextMenuHandler);
+    self.setEvent('closeContext', 'click', closeContextHandler);
+    self.setEvent('closeOtherContext', 'contextmenu', closeOtherContextHandler);
+  }
+  
+  function _initBindEvent( self, elements ){
+    self.debug('_initBindEvent', elements);
+    
+    _bindEvent(self, 'contextMenu', elements);
+  }
+  
+  function _bindEvent( self, eventName, elements ){
+    self.debug('_bindEvent');
+    
+    var evt = self.getEvent(eventName);
+    var binds = [].concat(evt.binds, elements||[]);
+
+    self.debug('_bindEvent.evt', evt);
+    self.debug('_bindEvent.binds', binds);
     
     binds.forEach(function( el ){
-      console.log( 'bind', el );
-      el.addEventListener('contextmenu', __handleContextMenu( self ), false);
+      el.addEventListener(evt.type, evt.handler, false);
     });
     
-    self.setBinds(binds);
+    self.setEventBinds(eventName, binds);
   }
   
-  function _attach( self, moveX, moveY ){
-    _render(self);
+  function _unbindEvent(self, eventName){
+    self.debug('_unbindEvent', eventName);
+    
+    var evt = self.getEvent(eventName);
+    self.debug('_unbindEvent.evt', evt);
+    if( evt ){
+      if( evt.binds ){
+        evt.binds.forEach(function(el){
+          el.removeEventListener(evt.type, evt.handler, false);
+        });        
+        self.clearEventBinds( eventName );
+      }
+    }
+  }
+  
+  function _remove( self ){
+    self.debug('_remove');
     
     var root = self.getConfig('root');
     var instance = self.getInstance();
     
-    root.appendChild( instance );
-    
-    self.setOpen();
-    
-    if( moveX && moveY ){
-      _move( self, moveX, moveY );
+    if( instance && instance.parentElement ){
+      root.removeChild( instance );
+      self.clearInstance();
     }
+    
+    self.setClose();
   }
   
   function _move( self, moveX, moveY ){
+    self.debug('_move', {x:moveX, y:moveY});
+    
     var instance = self.getInstance('instance');
     var scrollEl = document.querySelector('html');
     
@@ -190,45 +266,31 @@ CustomContextMenu.prototype = (function(){
     instance.style.left = posX+'px';
     instance.style.top = posY+'px';
     
-    self.debug(
-      JSON.stringify({
-        client: {
-          width: instance.clientWidth,
-          height: instance.clientHeight,
-        },
-        point: { 
-          pointX: pointX, 
-          pointY: pointY,
-        },
-        check: {
-          chkX: chkX,
-          chkY: chkY,
-        },
-        position: {
-          posX: posX,
-          posY: posY
-        }
-      }, null, 2)
-    );
-  }
-  
-  function _remove( self ){
-    var root = self.getConfig('root');
-    var instance = self.getInstance();
-    
-    if( instance ){
-      root.removeChild( instance );
-      self.clearInstance();
-    }
-    
-    self.setClose();
+    self.debug({
+      client: {
+        width: instance.clientWidth,
+        height: instance.clientHeight,
+      },
+      point: { 
+        pointX: pointX, 
+        pointY: pointY,
+      },
+      check: {
+        chkX: chkX,
+        chkY: chkY,
+      },
+      position: {
+        posX: posX,
+        posY: posY
+      }
+    });
   }
   
   // Private Methods
-  function __createElement( self, props ){
+  function _createElement( self, props ){
     if( props instanceof Array ){
       return props.map(function(_props){
-        return __createElement( self, _props );
+        return _createElement( self, _props );
       });
     } else if( props instanceof Object ) {
       var element = document.createElement( props.type );
@@ -239,10 +301,11 @@ CustomContextMenu.prototype = (function(){
         var value = props[key];
         
         switch( key ){
+          case 'type':
+          case 'format':
+            break;
           case 'visible': 
             if( value === false ) return null;
-          case 'type':
-            break;
           case 'className':
           case 'classList':
             [].concat(value).forEach(function(className){
@@ -255,67 +318,90 @@ CustomContextMenu.prototype = (function(){
             });
             break;
           case 'data':
-          	var dataType = value.type||'string';
-          	var dataName = value.name;
-          	
-          	var dataValue = self.getData(dataName);
-          	if( !dataValue ){ return null; }
-          	
-          	if( dataType === 'string' ){
-      				element.appendChild( document.createTextNode( dataValue||"" ) );
-          	} else if ( dataType === 'array' ){
-          		if( !Array.isArray(dataValue) ){
-          			dataValue = dataValue.split(value.delimiter);
-          		}
+            var dataType = value.type||'string';
+            var dataName = value.name;
+            
+            var dataValue = self.getData( dataName );
+            if( !dataValue ){ return null; }
+            
+            if( dataType === 'string' ){
+              if( props.format ){
+                var format = props.format;
+                var charLength = format.split("").filter(function(s){
+                  return s === '#';
+                }).length;
+                
+                if( charLength === dataValue.length ){
+                  var pivot = 0;
+                  
+                  dataValue = format.split(/[^#]/g).reduce(function(p,c,i){
+                    if( i === 1 ){
+                      pivot = p.length;
 
-        			var _props = {}
-        			Object.keys( props ).forEach(function(key){
-        				if( key !== 'data' ){
-        					_props[key] = props[key];
-        				}
-        			});
-          		
-          		var data = {
-          			length: dataValue.length
-          		}
-          		
-	      			var elements = dataValue.map(function(pv, idx){
-	      				
-	      				var updated = [].concat( value.children ).map(function( c ){
-	      					Object.keys( c ).forEach(function( ck ){
-	      						var cv = c[ck];
-	      						
-	      						if( typeof(cv) === 'string' ){
-	      							if( cv.indexOf('data.') ===  0 ){
-		    								c[ck] = eval(cv);
-		    							}
-	      						}
-	      					});
+                      p = dataValue.slice(0, pivot);
+                      p += format.charAt(pivot);
 
-      						
-	      					var updateProps = {}
-	      					if( c.label && c.label === value.item ){
-	      						updateProps.label = pv;
-	      					}
-      						
-	      					return Object.assign({}, c, updateProps);;
-	      				});
-	      				
-	      				console.log( updated );
-	      				
-	      				var filtered = updated.filter(function( c ){
-	      					if( c.rowspan && idx !== 0 ){
-	      						return false;
-	      					}
-	      					return true; 
-	      				});
-	      				
-		    				return __createElement( self, Object.assign({}, _props, { children: filtered }) );
-		    			});
+                    }
+                    p += dataValue.slice(pivot, pivot+c.length);
+                    p += format.charAt(p.length);
+                    pivot = pivot+c.length;
 
-            	return elements;
-          	}
-          	break;
+                    return p;
+                  });
+                }
+              }
+              element.appendChild( document.createTextNode( dataValue||"" ) );
+            } else if ( dataType === 'array' ){
+              var arrValue = [];
+              
+              if( !Array.isArray(dataValue) ){
+                arrValue = dataValue.split( value.delimiter );
+              }
+
+              var _props = {}
+              Object.keys( props ).forEach(function(key){
+                if( key !== 'data' ){
+                  _props[key] = props[key];
+                }
+              });
+              
+              var data = {
+                length: arrValue.length
+              }
+              
+              var elements = arrValue.map(function(pv, idx){
+                var updated = [].concat( value.children ).map(function( c ){
+                  var updateProps = Object.assign({}, c);
+                  
+                  Object.keys( updateProps ).forEach(function( uk ){
+                    var uv = updateProps[uk];
+                    
+                    if( typeof(uv) === 'string' ){
+                      if( uv.indexOf('data.') ===  0 ){
+                        updateProps[uk] = eval(uv);
+                      }
+                    }
+                  });
+                  
+                  if( updateProps.label && updateProps.label === value.item ){
+                    updateProps.label = pv;
+                  }
+                  return updateProps;
+                });
+                
+                var filtered = updated.filter(function( c ){
+                  if( c.rowspan && idx !== 0 ){
+                    return false;
+                  }
+                  return true; 
+                });
+                
+                return _createElement( self, Object.assign({}, _props, { children: filtered }) );
+              });
+
+              return elements;
+            }
+            break;
           case 'label':
             element.appendChild( document.createTextNode( value||"" ) );
             break;
@@ -326,7 +412,7 @@ CustomContextMenu.prototype = (function(){
             break;
           case 'children': // value: Object, Array
             [].concat( value ).map(function( childrenProps ){
-              return __createElement( self, childrenProps );
+              return _createElement( self, childrenProps );
             }).forEach(function( children ){
               if( children ){
                 // Object or Array
@@ -349,57 +435,119 @@ CustomContextMenu.prototype = (function(){
   
   // Private Methods
   function __handleContextMenu( self ){
+    self.debug('__handleContextMenu');
+    
     function eventHandler(event){
       event.preventDefault();
-
-      self.setCurrentEvent(event);
+      
+      self.debug('event', self.isOpen());
+      self.debug('event', self.getInstance());
       
       if( !self.isOpen() ){
-        var root = self.getConfig('root');
+        _render(self);
         
-        function closeContextMenu(_event){
-          var target = _event.target;
-
-          var instance = self.getInstance();
-          var closest = target.closest('#'+instance.id);
-
-          if( !closest ){
-            _remove( self );
-            root.removeEventListener('click', closeContextMenu, false);
-          }
-        }
-        root.addEventListener('click', closeContextMenu, false);
-
-        _attach( self );
+        _bindEvent(self, 'closeContext', self.getConfig('root'));
       }
       
       _move( self, event.pageX, event.pageY );
+
+      self.setOpen();
     }
-    
-    self.setHandler( eventHandler );
     
     return eventHandler;
   }
   
+  
+  function __handleCloseContextMenu(self){
+    self.debug('__handleCloseContextMenu');
+    
+    function eventHandler(event){
+      console.log('close');
+      
+      var root = self.getConfig('root');
+      var target = event.target;
+      
+      var instance = self.getInstance();
+      if( instance ){
+        var closest = target.closest('.'+instance.className);
+        if( !closest ){
+          _remove( self );
+          
+          _unbindEvent(self, 'closeContext');
+        }
+      } else {        
+        _unbindEvent(self, 'closeContext');
+      }
+    }
+    
+    return eventHandler;
+  }
+  
+  function __handleCloseOtherContextMenu(self){
+    self.debug('__handleCloseOtherContextMenu');
+    
+    function eventHandler(event){
+      var evt = self.getEvent( eventName );
+      var root = self.getConfig('root');
+      var instance = self.getInstance();
+      
+      var binded = self.getEventBinds('contextMenu').filter(function(e){
+        return e.contains( event.target );
+      });
+      if( binded.length === 0 && ( instance && !instance.contains(event.target) ) ){
+        _remove(self);
+      }
+      
+      _unbindEvent(self, 'closeOtherContext');
+    }
+    
+    return eventHandler;
+  }
+  
+  
   return {
     init: function(){
       _init( this );
+      return this;
     },
     setProps: function( props ){
-    	this.setProps( props );
+      this.setProps( props );      
+      return this;
     },
     setDatas: function( datas ){
-    	this.setDatas( datas );
+      this.setDatas( datas );      
+      return this;
     },
-    bindEvent: function( elements ){    
-      _unbindEvent( this );  
-      _bindEvent( this, elements );
+    bindEvent: function( elements ){
+      _bindEvent( this, 'contextMenu', elements );
     },
     unbindEvent: function(){
       _unbindEvent( this );
     },
-    setPosition: function( x, y ){
-      _setPosition( this, x, y );
+    open: function( event, el, datas){
+      this.debug('open');
+      
+      var binded = this.getEventBinds('contextMenu').filter(function(e){
+        return e === el;
+      });
+      if( binded.length === 0 ){
+        this.addEventBind('contextMenu', el);
+      }
+      
+      this.debug('contextMenu.binds', this.getEventBinds('contextMenu'))
+      
+      if( datas ){
+        this.setDatas( datas );
+      }
+      
+      if( this.isOpen() ){
+        _render( this );
+      }
+      
+      __handleContextMenu(this)( event );
+    },
+    close: function(){
+      _remove( this );
     }
   }
 })();
